@@ -64,30 +64,12 @@ pages:
             hour-format: 12h # alternatively "24h"
             # Optionally hide the location from being displayed in the widget
             # hide-location: true
-
-          - type: markets
-            markets:
-              - symbol: SPY
-                name: S&P 500
-              - symbol: BTC-USD
-                name: Bitcoin
-              - symbol: NVDA
-                name: NVIDIA
-              - symbol: AAPL
-                name: Apple
-              - symbol: MSFT
-                name: Microsoft
-
-          - type: releases
-            cache: 1d
-            # Without authentication the Github API allows for up to 60 requests per hour. You can create a
-            # read-only token from your Github account settings and use it here to increase the limit.
-            # token: ...
-            repositories:
-              - glanceapp/glance
-              - go-gitea/gitea
-              - immich-app/immich
-              - syncthing/syncthing
+          - type: monitor
+            sites:
+              - url: https://snip.localnet.link
+                title: Snip
+              - url: https://itimpact.ro
+                title: itimpact.ro
 
   # Add more pages here:
   # - name: Your page name

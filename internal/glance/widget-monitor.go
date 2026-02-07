@@ -20,6 +20,7 @@ type monitorWidget struct {
 	Sites      []struct {
 		*SiteStatusRequest `yaml:",inline"`
 		Status             *siteStatus     `yaml:"-"`
+		PrevStatus         *siteStatus     `yaml:"-"`
 		URL                string          `yaml:"-"`
 		ErrorURL           string          `yaml:"error-url"`
 		Title              string          `yaml:"title"`
@@ -58,10 +59,51 @@ func (widget *monitorWidget) update(ctx context.Context) {
 	for i := range widget.Sites {
 		site := &widget.Sites[i]
 		status := &statuses[i]
+
+		old := site.Status
 		site.Status = status
 
 		if !slices.Contains(site.AltStatusCodes, status.Code) && (status.Code >= 400 || status.Error != nil) {
 			widget.HasFailing = true
+		}
+
+		// emit fine-grained event if status changed compared to previous
+		changed := false
+		if old == nil {
+			// treat initial population as not a state change
+			changed = false
+		} else {
+			if old.Code != status.Code || old.TimedOut != status.TimedOut {
+				changed = true
+			} else if (old.Error == nil) != (status.Error == nil) {
+				changed = true
+			} else if old.Error != nil && status.Error != nil && old.Error.Error() != status.Error.Error() {
+				changed = true
+			}
+		}
+
+		if changed {
+			payload := map[string]any{
+				"widget_id": widget.GetID(),
+				"title":     site.Title,
+				"url":       site.DefaultURL,
+				"status":    status.Code,
+				"timed_out": status.TimedOut,
+			}
+
+			if status.Error != nil {
+				payload["error"] = status.Error.Error()
+			}
+
+			publishEvent("monitor:site_changed", payload)
+		}
+
+		// remember previous status
+		site.PrevStatus = &siteStatus{
+			Code:         status.Code,
+			TimedOut:     status.TimedOut,
+			ResponseTime: status.ResponseTime,
+			Error:        status.Error,
 		}
 
 		if status.Error != nil && site.ErrorURL != "" {

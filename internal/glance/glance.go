@@ -42,6 +42,8 @@ type application struct {
 	usernameHashToUsername map[string]string
 	authAttemptsMu         sync.Mutex
 	failedAuthAttempts     map[string]*failedAuthAttempt
+	monitorCtx             context.Context
+	monitorCancel          context.CancelFunc
 }
 
 func newApplication(c *config) (*application, error) {
@@ -52,6 +54,9 @@ func newApplication(c *config) (*application, error) {
 		slugToPage: make(map[string]*page),
 		widgetByID: make(map[uint64]widget),
 	}
+
+	// initialize global event hub
+	globalEventHub = newEventHub()
 	config := &app.Config
 
 	//
@@ -150,6 +155,9 @@ func newApplication(c *config) (*application, error) {
 		assetResolver: app.StaticAssetPath,
 	}
 
+	// initialize context for background workers
+	app.monitorCtx, app.monitorCancel = context.WithCancel(context.Background())
+
 	for p := range config.Pages {
 		page := &config.Pages[p]
 		page.PrimaryColumnIndex = -1
@@ -226,6 +234,39 @@ func newApplication(c *config) (*application, error) {
 		return nil, fmt.Errorf("parsing manifest.json: %v", err)
 	}
 	app.parsedManifest = []byte(manifest)
+
+	// start background monitor updater to check monitor widgets periodically
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-app.monitorCtx.Done():
+				return
+			case <-ticker.C:
+				for _, page := range app.slugToPage {
+					page.mu.Lock()
+					// head widgets
+					for i := range page.HeadWidgets {
+						if mon, ok := page.HeadWidgets[i].(*monitorWidget); ok {
+							mon.update(app.monitorCtx)
+						}
+					}
+
+					// column widgets
+					for c := range page.Columns {
+						for w := range page.Columns[c].Widgets {
+							if mon, ok := page.Columns[c].Widgets[w].(*monitorWidget); ok {
+								mon.update(app.monitorCtx)
+							}
+						}
+					}
+					page.mu.Unlock()
+				}
+			}
+		}
+	}()
 
 	return app, nil
 }
@@ -355,6 +396,16 @@ func (a *application) handlePageContentRequest(w http.ResponseWriter, r *http.Re
 
 		page.updateOutdatedWidgets()
 		err = pageContentTemplate.Execute(&responseBytes, pageData)
+
+		// detect content changes and publish event
+		newContent := responseBytes.Bytes()
+		if !bytes.Equal(newContent, page.lastRenderedContent) {
+			// copy content
+			page.lastRenderedContent = make([]byte, len(newContent))
+			copy(page.lastRenderedContent, newContent)
+			// publish an event that this page changed
+			publishEvent("page:update", map[string]string{"slug": page.Slug})
+		}
 	}()
 
 	if err != nil {
@@ -424,6 +475,31 @@ func (a *application) handleWidgetRequest(w http.ResponseWriter, r *http.Request
 	// widget.handleRequest(w, r)
 }
 
+func (a *application) handleWidgetContentRequest(w http.ResponseWriter, r *http.Request) {
+	widgetValue := r.PathValue("widget")
+
+	widgetID, err := strconv.ParseUint(widgetValue, 10, 64)
+	if err != nil {
+		a.handleNotFound(w, r)
+		return
+	}
+
+	widget, exists := a.widgetByID[widgetID]
+	if !exists {
+		a.handleNotFound(w, r)
+		return
+	}
+
+	if a.handleUnauthorizedResponse(w, r, showUnauthorizedJSON) {
+		return
+	}
+
+	// render widget HTML and return
+	html := widget.Render()
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(html))
+}
+
 func (a *application) StaticAssetPath(asset string) string {
 	return a.Config.Server.BaseURL + "/static/" + staticFSHash + "/" + asset
 }
@@ -440,6 +516,10 @@ func (a *application) server() (func() error, func() error) {
 	mux.HandleFunc("GET /{page}", a.handlePageRequest)
 
 	mux.HandleFunc("GET /api/pages/{page}/content/{$}", a.handlePageContentRequest)
+	// widget content endpoint for partial updates
+	mux.HandleFunc("GET /api/widgets/{widget}/content/{$}", a.handleWidgetContentRequest)
+	// SSE endpoint for live events
+	mux.HandleFunc("GET /api/events", a.handleEvents)
 
 	if !a.Config.Theme.DisablePicker {
 		mux.HandleFunc("POST /api/set-theme/{key}", a.handleThemeChangeRequest)

@@ -748,7 +748,7 @@ async function setupPage() {
 
     const pageElement = document.getElementById("page");
     const pageContentElement = document.getElementById("page-content");
-    const pageContent = await fetchPageContent(pageData);
+    let pageContent = await fetchPageContent(pageData);
 
     pageContentElement.innerHTML = pageContent;
 
@@ -781,6 +781,173 @@ async function setupPage() {
             document.body.classList.add("page-columns-transitioned");
         }, 300);
     }
+
+    // try to setup SSE stream; fall back to polling if not available
+    const setupSSE = () => {
+        if (typeof EventSource === 'undefined') return false;
+
+        try {
+            const es = new EventSource(`${pageData.baseURL}/api/events`);
+
+            es.onmessage = async (ev) => {
+                try {
+                    const msg = JSON.parse(ev.data);
+                    if (msg.type === 'page:update' && msg.data && msg.data.slug === pageData.slug) {
+                        const newContent = await fetchPageContent(pageData);
+                        if (newContent !== pageContent) {
+                            pageContent = newContent;
+                            pageContentElement.innerHTML = newContent;
+
+                            try {
+                                setupPopovers();
+                                setupClocks();
+                                await setupCalendars();
+                                await setupTodos();
+                                setupCarousels();
+                                setupSearchBoxes();
+                                setupCollapsibleLists();
+                                setupCollapsibleGrids();
+                                setupGroups();
+                                setupMasonries();
+                                setupDynamicRelativeTime();
+                                setupLazyImages();
+
+                                for (let i = 0; i < contentReadyCallbacks.length; i++) {
+                                    contentReadyCallbacks[i]();
+                                }
+                            } catch (e) {
+                                console.error('Error applying SSE-updated page content', e);
+                            }
+                        }
+                    } else if (msg.type === 'monitor:site_changed') {
+                        // update only the affected widget if possible
+                        try {
+                            const widgetId = msg.data && msg.data.widget_id;
+                            if (widgetId) {
+                                const resp = await fetch(`${pageData.baseURL}/api/widgets/${widgetId}/content/`);
+                                if (resp.ok) {
+                                    const html = await resp.text();
+                                    const widgetElem = document.querySelector(`[data-widget-id="${widgetId}"]`);
+                                    if (widgetElem) {
+                                        widgetElem.outerHTML = html;
+
+                                        try {
+                                            // re-run small initializers for replaced content
+                                            setupPopovers();
+                                            setupClocks();
+                                            await setupCalendars();
+                                            await setupTodos();
+                                            setupCarousels();
+                                            setupSearchBoxes();
+                                            setupCollapsibleLists();
+                                            setupCollapsibleGrids();
+                                            setupGroups();
+                                            setupMasonries();
+                                            setupDynamicRelativeTime();
+                                            setupLazyImages();
+
+                                            for (let i = 0; i < contentReadyCallbacks.length; i++) {
+                                                contentReadyCallbacks[i]();
+                                            }
+                                        } catch (e) {
+                                            console.error('Error applying widget-updated content', e);
+                                        }
+                                    }
+                                }
+                            } else {
+                                // fallback to full page fetch if widget_id missing
+                                const newContent = await fetchPageContent(pageData);
+                                if (newContent !== pageContent) {
+                                    pageContent = newContent;
+                                    pageContentElement.innerHTML = newContent;
+                                }
+                            }
+                        } catch (e) {
+                            console.error('Failed to fetch widget content after monitor event', e);
+                        }
+                    }
+                } catch (e) {
+                    console.error('Failed to handle SSE message', e);
+                }
+            };
+
+            es.onerror = (e) => {
+                console.error('SSE connection error', e);
+                try { es.close(); } catch (e) {}
+                // attempt reconnect after a short delay
+                setTimeout(() => setupSSE(), 3000);
+            };
+
+            return true;
+        } catch (e) {
+            return false;
+        }
+    };
+
+    // start a lightweight poller to refresh page content when it changes
+    const defaultLivePollIntervalMs = 15000;
+
+    const startLivePoller = () => {
+        const intervalMs = parseInt(pageElement.dataset.livePollInterval) || defaultLivePollIntervalMs;
+        let lastContent = pageContent;
+        let timeoutId = null;
+
+        const poll = async () => {
+            if (document.hidden) {
+                timeoutId = setTimeout(poll, intervalMs);
+                return;
+            }
+
+            try {
+                const newContent = await fetchPageContent(pageData);
+                if (newContent !== lastContent) {
+                    lastContent = newContent;
+                    pageContentElement.innerHTML = newContent;
+
+                    try {
+                        setupPopovers();
+                        setupClocks();
+                        await setupCalendars();
+                        await setupTodos();
+                        setupCarousels();
+                        setupSearchBoxes();
+                        setupCollapsibleLists();
+                        setupCollapsibleGrids();
+                        setupGroups();
+                        setupMasonries();
+                        setupDynamicRelativeTime();
+                        setupLazyImages();
+
+                        for (let i = 0; i < contentReadyCallbacks.length; i++) {
+                            contentReadyCallbacks[i]();
+                        }
+                    } catch (e) {
+                        console.error('Error applying updated page content', e);
+                    }
+                }
+            } catch (e) {
+                console.error('Live poll failed:', e);
+            }
+
+            timeoutId = setTimeout(poll, intervalMs);
+        };
+
+        // pause/resume on visibilitychange
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                if (timeoutId) clearTimeout(timeoutId);
+                return;
+            }
+
+            // resume immediately when visible
+            poll();
+        });
+
+        poll();
+    };
+
+    const sseActive = setupSSE();
+    if (!sseActive) startLivePoller();
 }
 
 setupPage();

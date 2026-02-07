@@ -97,6 +97,14 @@ func serveApp(configPath string) error {
 	exitChannel := make(chan struct{})
 	hadValidConfigOnStartup := false
 	var stopServer func() error
+	var oldApp *application
+
+	// defer cleanup of background workers
+	defer func() {
+		if oldApp != nil && oldApp.monitorCancel != nil {
+			oldApp.monitorCancel()
+		}
+	}()
 
 	onChange := func(newContents []byte) {
 		if stopServer != nil {
@@ -124,6 +132,13 @@ func serveApp(configPath string) error {
 
 			return
 		}
+
+		// cancel background workers from old application
+		if oldApp != nil && oldApp.monitorCancel != nil {
+			oldApp.monitorCancel()
+		}
+
+		oldApp = app
 
 		if !hadValidConfigOnStartup {
 			hadValidConfigOnStartup = true
@@ -170,6 +185,7 @@ func serveApp(configPath string) error {
 			return fmt.Errorf("creating application: %w", err)
 		}
 
+		oldApp = app
 		startServer, _ := app.server()
 		if err := startServer(); err != nil {
 			return fmt.Errorf("starting server: %w", err)
