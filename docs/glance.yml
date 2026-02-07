@@ -72,8 +72,7 @@ pages:
                 title: GitHub
               - url: https://www.reddit.com
                 title: Reddit
-              - url: https://snip.localnet.link
-                title: Snip 
+
 
   # Add more pages here:
   # - name: Your page name
