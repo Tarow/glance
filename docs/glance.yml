@@ -66,10 +66,12 @@ pages:
             # hide-location: true
           - type: monitor
             sites:
-              - url: https://snip.localnet.link
-                title: Snip
-              - url: https://itimpact.ro
-                title: itimpact.ro
+              - url: https://www.google.com
+                title: Google
+              - url: https://www.github.com
+                title: GitHub
+              - url: https://www.reddit.com
+                title: Reddit
 
   # Add more pages here:
   # - name: Your page name
