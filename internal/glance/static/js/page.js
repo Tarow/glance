@@ -407,6 +407,11 @@ function setupCollapsibleLists() {
             continue;
         }
 
+        // guard: skip if already initialized (button is added as next sibling, not child)
+        if (list.nextElementSibling && list.nextElementSibling.classList.contains("expand-toggle-button")) {
+            continue;
+        }
+
         attachExpandToggleButton(list);
 
         for (let c = collapseAfter; c < list.children.length; c++) {
@@ -428,6 +433,11 @@ function setupCollapsibleGrids() {
         const gridElement = collapsibleGridElements[i];
 
         if (gridElement.dataset.collapseAfterRows === undefined) {
+            continue;
+        }
+
+        // guard: skip if already initialized (button is added as next sibling, not child)
+        if (gridElement.nextElementSibling && gridElement.nextElementSibling.classList.contains("expand-toggle-button")) {
             continue;
         }
 
@@ -831,26 +841,20 @@ async function setupPage() {
                                     if (widgetElem) {
                                         widgetElem.outerHTML = html;
 
-                                        try {
-                                            // re-run small initializers for replaced content
-                                            setupPopovers();
-                                            setupClocks();
-                                            await setupCalendars();
-                                            await setupTodos();
-                                            setupCarousels();
-                                            setupSearchBoxes();
-                                            setupCollapsibleLists();
-                                            setupCollapsibleGrids();
-                                            setupGroups();
-                                            setupMasonries();
-                                            setupDynamicRelativeTime();
-                                            setupLazyImages();
+                                        // re-run initializers globally
+                                        // setup functions now have guards to prevent duplicate listeners
+                                        setupPopovers();
+                                        setupClocks();
+                                        setupCarousels();
+                                        setupCollapsibleLists();
+                                        setupCollapsibleGrids();
+                                        setupGroups();
+                                        setupMasonries();
+                                        setupDynamicRelativeTime();
+                                        setupLazyImages();
 
-                                            for (let i = 0; i < contentReadyCallbacks.length; i++) {
-                                                contentReadyCallbacks[i]();
-                                            }
-                                        } catch (e) {
-                                            console.error('Error applying widget-updated content', e);
+                                        for (let i = 0; i < contentReadyCallbacks.length; i++) {
+                                            contentReadyCallbacks[i]();
                                         }
                                     }
                                 }
